@@ -671,7 +671,7 @@ dumpDiff :: PlanJson -> PlanJson -> CWriter ()
 dumpDiff oldPlan newPlan = case liftA2 (,) (reductionClosureAM oldPlan) (reductionClosureAM newPlan) of
     Left  xs       -> loopGraph xs
     Right ((old, oldC), (new, newC)) -> do
-        let oldPkgs, newPkgs :: Map DotPkgName Ver
+        let oldPkgs, newPkgs :: Map DotPkgName Unit
             oldPkgs = M.fromList $ map (fromUnitId oldPm . fst) $ M.toList old
             newPkgs = M.fromList $ map (fromUnitId newPm . fst) $ M.toList new
 
@@ -683,27 +683,27 @@ dumpDiff oldPlan newPlan = case liftA2 (,) (reductionClosureAM oldPlan) (reducti
             putCTextLn "~~~~~~~~~~~~~~~~"
             putCTextLn ""
 
-            ifor_ alignedPkgs $ \(DPN pn cn) vers -> do
+            ifor_ alignedPkgs $ \(DPN pn cn) units -> do
                 let emphasise' | pn `S.member` localPackages             = underline
                                | pn `S.member` directDepsOfLocalPackages = emphasise
                                | otherwise                               = id
 
-                let putLine b v = putCTextLn $ colorifyText c s <> emphasise' (fromText (dispPkgId (PkgId pn v)) <> fromText (maybe "" (\cn' -> " " <> dispCompName cn') cn))
-                      where
-                        c = if b then Green else Red
-                        s = if b then "+" else "-"
+                    putPn = fromText $ prettyPkgName pn
+                    putCn = fromText $ maybe "" (\cn' -> " " <> dispCompName cn') cn
+                    putPv = fromText . dispVer
 
-                let putLine2 b v = putCTextLn $ colorifyText c s <> emphasise' (fromText (prettyPkgName pn) <> "-" <> colorifyText c (dispVer v) <> fromText (maybe "" (\cn' -> " " <> dispCompName cn') cn))
-                      where
-                        c = if b then Green else Red
-                        s = if b then "+" else "-"
-
-                case vers of
-                    This o    -> putLine False o
-                    That n    -> putLine True n
-                    These o n
-                        | o == n    -> pure ()
-                        | otherwise -> putLine2 False o >> putLine2 True n
+                case units of
+                    This Unit {uPId = PkgId _ ver} -> putCTextLn $ colorifyText Red   "-" <> emphasise' (putPn <> "-" <> putPv ver <> putCn)
+                    That Unit {uPId = PkgId _ ver} -> putCTextLn $ colorifyText Green "+" <> emphasise' (putPn <> "-" <> putPv ver <> putCn)
+                    These o@Unit {uPId = PkgId _ oldVer} n@Unit{uPId = PkgId _ newVer}
+                        | oldVer /= newVer -> do
+                              putCTextLn $ colorifyText Red   "-" <> emphasise' (putPn <> "-" <> colorifyText Red   (dispVer oldVer) <> putCn)
+                              putCTextLn $ colorifyText Green "+" <> emphasise' (putPn <> "-" <> colorifyText Green (dispVer newVer) <> putCn)
+                        | let changes = distillChanges o n
+                        , not (null changes) -> do
+                              putCTextLn $ colorifyText Red   "-" <> emphasise' (putPn <> "-" <> putPv oldVer <> putCn <> " " <> colorifyText Red   (T.unwords $ map fst changes))
+                              putCTextLn $ colorifyText Green "+" <> emphasise' (putPn <> "-" <> putPv oldVer <> putCn <> " " <> colorifyText Green (T.unwords $ map snd changes))
+                        | otherwise -> pure ()
 
         let mk :: Map UnitId Unit
                -> Map DotUnitId (Set DotUnitId)
@@ -754,10 +754,10 @@ dumpDiff oldPlan newPlan = case liftA2 (,) (reductionClosureAM oldPlan) (reducti
         nameFromId (PkgId pn _) = pn
 
 
-    fromUnitId :: Map UnitId Unit -> DotUnitId -> (DotPkgName, Ver)
+    fromUnitId :: Map UnitId Unit -> DotUnitId -> (DotPkgName, Unit)
     fromUnitId db (DU uid cn) = case M.lookup uid db of
         Nothing -> error $ "Unknown unit-id " ++ show uid
-        Just Unit { uPId = PkgId pn ver } -> (DPN pn cn, ver)
+        Just unit@Unit { uPId = PkgId pn _ver } -> (DPN pn cn, unit)
 
     fromUnitId' :: Map UnitId Unit -> DotUnitId -> DotPkgName
     fromUnitId' db = fst . fromUnitId db
@@ -767,7 +767,7 @@ dumpDiff oldPlan newPlan = case liftA2 (,) (reductionClosureAM oldPlan) (reducti
         putCTextLn $ colorifyStr Red $ "panic: Found a loop"
         mapM_ (putCTextLn . fromString . show) xs
 
-    go1 :: Map DotPkgName (These Ver Ver)
+    go1 :: Map DotPkgName (These Unit Unit)
         -> Map DotPkgName (Set DotPkgName)
         -> Map DotPkgName (Set DotPkgName)
         -> Map DotPkgName (These (Set DotPkgName) (Set DotPkgName))
@@ -807,17 +807,20 @@ dumpDiff oldPlan newPlan = case liftA2 (,) (reductionClosureAM oldPlan) (reducti
             let pn_label :: CText
                 pn_label = emphasise' $ fromText (prettyCompTy pn comp) <> case (op, M.lookup dpn alignedPkgs) of
                     (_, Nothing) -> ""
-                    (_, Just (This ver))  -> " " <> fromText (dispVer ver) <> " -> "
-                    (_, Just (That ver))  -> " -> " <> fromText (dispVer ver)
-                    (Changed, Just (These o n))
-                        | o == n -> "-" <> fromText (dispVer o)
-                        | otherwise  -> " " <> colorifyText Red (dispVer o) <> " -> " <> colorifyText Green (dispVer n)
-                    (Added, Just (These o n))
-                        | o == n -> "-" <> fromText (dispVer o)
-                        | otherwise -> " -> " <> fromText (dispVer n)
-                    (Removed, Just (These o n))
-                        | o == n -> "-" <> fromText (dispVer o)
-                        | otherwise -> " " <> fromText (dispVer o) <> " ->"
+                    (_, Just (This Unit{uPId=PkgId _ ver}))  -> " " <> fromText (dispVer ver) <> " -> "
+                    (_, Just (That Unit{uPId=PkgId _ ver}))  -> " -> " <> fromText (dispVer ver)
+                    (Changed, Just (These o@Unit{uPId=PkgId _ oVer} n@Unit{uPId=PkgId _ nVer}))
+                        | oVer /= nVer    -> " " <> colorifyText Red (dispVer oVer) <> " -> " <> colorifyText Green (dispVer nVer)
+                        | let changes = distillChanges o n
+                        , not (null changes) ->
+                              "-" <> fromText (dispVer oVer) <> foldMap (\(old, new) -> " " <> colorifyText Red old <> " -> " <> colorifyText Green new) changes
+                        | otherwise -> "-" <> fromText (dispVer oVer)
+                    (Added, Just (These Unit{uPId=PkgId _ oVer} Unit{uPId=PkgId _ nVer}))
+                        | oVer /= nVer -> " -> " <> fromText (dispVer nVer)
+                        | otherwise -> "-" <> fromText (dispVer oVer)
+                    (Removed, Just (These Unit{uPId=PkgId _ oVer} Unit{uPId=PkgId _ nVer}))
+                        | oVer /= nVer -> " " <> fromText (dispVer oVer) <> " ->"
+                        | otherwise -> "-" <> fromText (dispVer oVer)
 
             if seen
             then putStrLn' (linepfx lvl) $ pn_label <> " ┄┄"
@@ -850,6 +853,55 @@ dumpDiff oldPlan newPlan = case liftA2 (,) (reductionClosureAM oldPlan) (reducti
     prettyCompTy' pn (CompNameBench n)  = "[" <> prettyPkgName pn <> ":bench:" <> n <> "]"
     prettyCompTy' pn (CompNameSubLib n) = "[" <> prettyPkgName pn <> ":lib:" <> n <> "]"
     prettyCompTy' pn (CompNameFLib n)   = "[" <> prettyPkgName pn <> ":flib:" <> n <> "]"
+
+
+distillChanges :: Unit -> Unit -> [(Text, Text)]
+distillChanges o n = catMaybes [changedPkgSrc, changedSha256, changedCabalSha256] ++ changedFlags
+  where
+    changedPkgSrc = do
+      oldPkgSrc <- prettyPkgSrc <$> uPkgSrc o
+      newPkgSrc <- prettyPkgSrc <$> uPkgSrc n
+      guard (oldPkgSrc /= newPkgSrc)
+      pure ("src: " <> oldPkgSrc, "src: " <> newPkgSrc)
+
+    changedSha256 = do
+      oldSha256 <- dispSha256 <$> uSha256 o
+      newSha256 <- dispSha256 <$> uSha256 n
+      guard (oldSha256 /= newSha256)
+      pure ("src-hash: " <> T.take 8 oldSha256, "src-hash: " <> T.take 8 newSha256)
+
+
+    changedCabalSha256 = do
+      oldCabalSha256 <- dispSha256 <$> uCabalSha256 o
+      newCabalSha256 <- dispSha256 <$> uCabalSha256 n
+      guard (oldCabalSha256 /= newCabalSha256)
+      pure ("cabal-hash: " <> T.take 8 oldCabalSha256, "cabal-hash: " <> T.take 8 newCabalSha256)
+
+    changedFlags = do
+     (fn, tf) <- M.toList $ align (uFlags o) (uFlags n)
+     case tf of
+       This b -> [(prettyFlagValue fn b, "")]
+       That b -> [("", prettyFlagValue fn b)]
+       These bo bn
+          | bo /= bn  -> [(prettyFlagValue fn bo, prettyFlagValue fn bn)]
+          | otherwise -> []
+
+prettyPkgSrc :: PkgLoc -> Text
+prettyPkgSrc (LocalUnpackedPackage    _)         = "local"
+prettyPkgSrc (LocalTarballPackage     _)         = "local"
+prettyPkgSrc (RemoteTarballPackage    (URI uri)) = uri
+prettyPkgSrc (RepoTarballPackage      repo)      = prettyRepo repo
+prettyPkgSrc (RemoteSourceRepoPackage _)         = "srp" -- 😭
+
+prettyRepo :: Repo -> Text
+prettyRepo (RepoLocal _)          = "local"
+prettyRepo (RepoRemote (URI uri)) = uri
+prettyRepo (RepoSecure (URI uri)) = uri
+prettyRepo (RepoLocalNoIndex _)   = "local"
+
+prettyFlagValue :: FlagName -> Bool -> Text
+prettyFlagValue (FlagName f) True   = "+" <> f
+prettyFlagValue (FlagName f) False  = "-" <> f
 
 -------------------------------------------------------------------------------
 -- Dot

@@ -116,7 +116,7 @@ data PkgLoc
    | RemoteSourceRepoPackage !SourceRepo
      deriving (Show,Eq,Ord)
 
--- | Equivalent to @Cabal@\'s @Distribution.Types.SourceRepo@
+-- | Equivalent to @Cabal@\'s @Distribution.Client.Types.Repo@
 --
 -- @since 0.5.0.0
 data Repo
@@ -126,7 +126,7 @@ data Repo
    | RepoLocalNoIndex !FilePath
      deriving (Show,Eq,Ord)
 
--- | Equivalent to @Cabal@\'s @Distribution.Client.Types.Repo@
+-- | Equivalent to @Cabal@\'s @Distribution.Client.Types.SourceRepo@
 --
 -- @since 0.5.0.0
 data SourceRepo = SourceRepo
@@ -207,7 +207,7 @@ data Unit = Unit
        -- __NOTE__: This meta-information is available only for 'pjCabalVersion' >= 2.4.0.0
        --
        -- @since 0.5.0.0
-     } deriving Show
+     } deriving (Show,Eq)
 
 -- | Component name inside a build-plan unit
 --
@@ -228,7 +228,7 @@ data CompInfo = CompInfo
     { ciLibDeps :: Set UnitId     -- ^ library dependencies
     , ciExeDeps :: Set UnitId     -- ^ executable dependencies
     , ciBinFile :: Maybe FilePath -- ^ path-name of artifact if available
-    } deriving Show
+    } deriving (Show,Eq)
 
 ----------------------------------------------------------------------------
 ----------------------------------------------------------------------------
