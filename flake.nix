@@ -1,34 +1,43 @@
 {
-  # This is a template created by `hix init`
-  inputs.haskellNix.url = "github:input-output-hk/haskell.nix";
-  inputs.nixpkgs.follows = "haskellNix/nixpkgs-unstable";
-  inputs.flake-utils.url = "github:numtide/flake-utils";
-  outputs = { self, nixpkgs, flake-utils, haskellNix }:
-    let
-      supportedSystems = [
-        "x86_64-linux"
-        "x86_64-darwin"
-        "aarch64-linux"
-        "aarch64-darwin"
-      ];
-    in
-    flake-utils.lib.eachSystem supportedSystems (system:
-      let
-        pkgs = import nixpkgs {
-          inherit system;
-          inherit (haskellNix) config;
-          overlays = [
-            haskellNix.overlay
-            (final: prev: {
-              hixProject = final.haskell-nix.hix.project { src = ./.; };
-            })
-          ];
-        };
-        flake = pkgs.hixProject.flake { };
-      in
-      flake // {
-        legacyPackages = pkgs;
-      });
+  inputs = {
+    flake-parts.url = "github:hercules-ci/flake-parts";
+    haskell-nix.url = "github:input-output-hk/haskell.nix";
+  };
+  outputs = inputs@{ flake-parts, haskell-nix, ... }:
+    flake-parts.lib.mkFlake
+      { inherit inputs; }
+      {
+        systems = [ "x86_64-linux" ];
+        perSystem = { self', system, pkgs, ... }:
+          let
+            project = pkgs.haskell-nix.cabalProject' {
+              name = "cabal-tools";
+              compiler-nix-name = "ghc96";
+
+              src = ./.;
+
+              crossPlatforms = p:
+                pkgs.lib.optionals
+                  (pkgs.stdenv.system == "x86_64-linux")
+                  [ p.mingwW64 p.musl64 ];
+
+              shell.tools = {
+                cabal = "latest";
+                cabal-plan = "latest";
+                fourmolu = "0.14.0.0";
+                haskell-language-server = "latest";
+              };
+            };
+            flake = project.flake { };
+          in
+          {
+            _module.args.pkgs = haskell-nix.legacyPackages.${system};
+            inherit (flake) apps checks devShells;
+            packages = flake.packages // {
+              default = self'.packages."cabal-plan:exe:cabal-plan";
+            };
+          };
+      };
 
   # --- Flake Local Nix Configuration ----------------------------
   nixConfig = {
